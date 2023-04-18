@@ -8,6 +8,7 @@ from tqdm import tqdm
 import random
 import tensorflow as tf
 from tensorflow import keras
+import pickle
 
 """
 These are used to label the data. The first file is the first file in the dataset, and the fourth file is the fourth file in the dataset.
@@ -26,7 +27,7 @@ fourth_file_labels = [3, 4, 4, 3, 4, 2, 3, 4, 2, 3, 4, 3, 4, 3, 2, 3, 2, 3, 2, 3
 fourth_file_len = 531
 
 
-def get_data_from_directory(directory):
+def get_data_from_directory(directory, return_scan_names=False):
     """
     This function takes in a directory and returns the lists of data and labels for the data in that directory.
     :param directory: the directory to get the data from
@@ -56,12 +57,13 @@ def get_data_from_directory(directory):
     # create the list and corresponding labels of our data
     data_list = []
     data_labels = []
+    scan_names = []
     for file in create_trainable_set.get_all_files_in_directory(directory=directory):
         las = laspy.read(file)
 
         points = [las.x, las.y, las.z, las.intensity]
         data_list.append(points)
-
+        scan_names.append(file)
         if 'second' in file or 'third' in file:
             data_labels.append(4) # 4 is the label for all .las files in the second and third scans
         elif 'first' in file:
@@ -75,6 +77,8 @@ def get_data_from_directory(directory):
         else:
             print("ERROR: Cannot label file: " + file)
 
+    if return_scan_names:
+        return data_list, data_labels, scan_names
     return data_list, data_labels
 
 
@@ -297,6 +301,26 @@ def one_hot_labels(label_list):
     return one_hot_list
 
 
+def one_hot_to_int(one_hot_list):
+    new_list = []
+    for current_tuple in one_hot_list:
+        if current_tuple == (1, 0, 0, 0, 0, 0):
+            new_list.append(0)
+        elif current_tuple == (0, 1, 0, 0, 0, 0):
+            new_list.append(1)
+        elif current_tuple == (0, 0, 1, 0, 0, 0):
+            new_list.append(2)
+        elif current_tuple == (0, 0, 0, 1, 0, 0):
+            new_list.append(3)
+        elif current_tuple == (0, 0, 0, 0, 1, 0):
+            new_list.append(4)
+        elif current_tuple == (0, 0, 0, 0, 0, 1):
+            new_list.append(5)
+        else:
+            print("Error: invalid one-hot tuple")
+    return new_list
+
+
 def create_new_classifier(num_voxels_per_dimension, train_directory=None, train_data=None, train_labels=None):
     """
     This function creates a new classifier and trains it on the data provided.
@@ -470,7 +494,6 @@ def test_model_with_intensity(model, num_voxels_per_dimension, test_directory=No
             print("Loading test data...")
             # Load the data
             test_data, test_labels = get_data_from_directory(test_directory)
-            test_labels = np.array(one_hot_labels(test_labels))
             print("Voxelizing and normalizing data...")
             test_data = np.array(voxelize_and_normalize_data_with_intensity(test_data, num_voxels_per_dimension))
 
@@ -482,6 +505,83 @@ def test_model_with_intensity(model, num_voxels_per_dimension, test_directory=No
     np.savetxt('realities.csv', np.argmax(test_labels, axis=1), delimiter=',', fmt='%d')
 
     print("Done!")
+
+
+def test_model_with_intensity_and_scan_name(model, num_voxels_per_dimension, test_data, test_labels, test_scan_names):
+    predictions = model.predict(test_data, batch_size=4)
+    first_predictions = []
+    first_truths = []
+    first_times = []
+    second_predictions = []
+    second_truths = []
+    second_times = []
+    third_predictions = []
+    third_truths = []
+    third_times = []
+    fourth_predictions = []
+    fourth_truths = []
+    fourth_times = []
+    for i in range(len(test_scan_names)):
+        if "first" in test_scan_names[i]:
+            first_predictions.append(np.argmax(predictions, axis=1)[i])
+            first_truths.append(test_labels[i])
+            basename = os.path.basename(test_scan_names[i])
+            file_no = int(basename[basename.find('_') + 1:basename.find('.')])
+            first_times = np.append(first_times, file_no)
+        elif "second" in test_scan_names[i]:
+            second_predictions.append(np.argmax(predictions, axis=1)[i])
+            second_truths.append(test_labels[i])
+            basename = os.path.basename(test_scan_names[i])
+            file_no = int(basename[basename.find('_') + 1:basename.find('.')])
+            second_times = np.append(second_times, file_no)
+        elif "third" in test_scan_names[i]:
+            third_predictions.append(np.argmax(predictions, axis=1)[i])
+            third_truths.append(test_labels[i])
+            basename = os.path.basename(test_scan_names[i])
+            file_no = int(basename[basename.find('_') + 1:basename.find('.')])
+            third_times = np.append(third_times, file_no)
+        elif "fourth" in test_scan_names[i]:
+            fourth_predictions.append(np.argmax(predictions, axis=1)[i])
+            fourth_truths.append(test_labels[i])
+            basename = os.path.basename(test_scan_names[i])
+            file_no = int(basename[basename.find('_') + 1:basename.find('.')])
+            fourth_times = np.append(fourth_times, file_no)
+        else:
+            print("Error: scan name not recognized")
+
+    plot_prediction_vs_reality(fourth_predictions, fourth_truths, fourth_times)
+
+
+def plot_prediction_vs_reality(prediction_list, reality_list, time_labels):
+
+    # Sort the lists by time
+    time_labels, prediction_list, reality_list = zip(*sorted(zip(time_labels, prediction_list, reality_list)))
+
+
+    # Create a new figure
+    plt.figure()
+
+    # Plot y1 vs x as a blue line
+    plt.plot(time_labels, prediction_list, color='blue', label='y1')
+
+    # Plot y2 vs x as a red line
+    plt.plot(time_labels, reality_list, color='red', label='y2')
+
+    # Set the x-axis label
+    plt.xlabel('time')
+
+    # Set the y-axis label
+    plt.ylabel('number of people')
+
+    # Set the plot title
+    plt.title('Line Graph of prediction and reality over time')
+
+    # Add a legend to the plot
+    plt.legend()
+
+    # Show the plot
+    plt.show()
+
 
 
 def evenly_split_data(data, labels):
@@ -506,7 +606,7 @@ def evenly_split_data(data, labels):
     return even_data, even_labels, odd_data, odd_labels
 
 
-def randomly_split_data(data, labels, percent_test):
+def randomly_split_data(data, labels, percent_test, scan_names=None):
     """
     This function randomly splits the data and labels into two sets, one for training and one for testing.
 
@@ -520,26 +620,67 @@ def randomly_split_data(data, labels, percent_test):
     test_labels = []
     train_data = []
     train_labels = []
+    if scan_names is not None:
+        test_scan_names = []
+        train_scan_names = []
     for i in range(len(data)):
         if random.random() < percent_test:
             test_data.append(data[i])
             test_labels.append(labels[i])
+            if scan_names is not None:
+                test_scan_names.append(scan_names[i])
         else:
             train_data.append(data[i])
             train_labels.append(labels[i])
+            if scan_names is not None:
+                train_scan_names.append(scan_names[i])
+    if scan_names is not None:
+        return train_data, train_labels, test_data, test_labels, train_scan_names, test_scan_names
     return train_data, train_labels, test_data, test_labels
 
 
-all_data, all_labels = get_data_from_directory(r'C:\Users\Regicide\Desktop\Honors Project\Data\Lidar\src\trainable_set')
-train_data, train_labels, test_data, test_labels = randomly_split_data(all_data, all_labels, 0.2)
-train_data = np.array(voxelize_and_normalize_data_with_intensity(train_data, 10))
-test_data = np.array(voxelize_and_normalize_data_with_intensity(test_data, 10))
-train_labels = np.array(one_hot_labels(train_labels))
-test_labels = np.array(one_hot_labels(test_labels))
+def save_processed_data_and_labels(directory_of_data):
+    all_data, all_labels, scan_names = get_data_from_directory(directory=directory_of_data, return_scan_names=True)
+    all_data = voxelize_and_normalize_data_with_intensity(all_data, 10)
+    all_labels = one_hot_labels(all_labels)
+
+    with open("alldata.pkl", "wb") as f:
+        pickle.dump(all_data, f)
+    with open("alllabels.pkl", "wb") as f:
+        pickle.dump(all_labels, f)
+    with open("scan_names.pkl", "wb") as f:
+        pickle.dump(scan_names, f)
+
+
+def load_processed_data_and_labels_from_file(return_scan_names=False):
+    with open("alldata.pkl", "rb") as f:
+        all_data = pickle.load(f)
+    with open("alllabels.pkl", "rb") as f:
+        all_labels = pickle.load(f)
+    with open("scan_names.pkl", "rb") as f:
+        scan_names = pickle.load(f)
+    
+    if return_scan_names:
+        return all_data, all_labels, scan_names
+    return all_data, all_labels
+
+
+#save_processed_data_and_labels('trainable_set')
+
+all_data, all_labels, scan_names = load_processed_data_and_labels_from_file(return_scan_names=True)
+
+train_data, train_labels, test_data, test_labels, train_scan_names, test_scan_names = randomly_split_data(all_data, all_labels, 0.2, scan_names=scan_names)
+
+train_data = np.array(train_data)
+train_labels = np.array(train_labels)
+test_data = np.array(test_data)
+test_labels = one_hot_to_int(test_labels)
 
 my_classifier = create_new_classifier_with_intensity(10, train_data=train_data, train_labels=train_labels)
+
 #my_classifier.save('new_ten_dim_random_split_with_intensity.h5')
 
 #my_classifier = load_model('ten_dim_random_split_with_intensity.h5')
 
-test_model_with_intensity(my_classifier, 10, test_data=test_data, test_labels=test_labels)
+#test_model_with_intensity(my_classifier, 10, test_data=test_data, test_labels=test_labels, test_scan_names=test_scan_names)
+test_model_with_intensity_and_scan_name(my_classifier, 10, test_data=test_data, test_labels=test_labels, test_scan_names=test_scan_names)

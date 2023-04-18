@@ -73,4 +73,4 @@ def create_trainable_set():
         shutil.copy(file, "trainable_set/" + os.path.basename(file))
 
 
-create_trainable_set()
+# create_trainable_set()
