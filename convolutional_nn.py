@@ -9,6 +9,8 @@ import random
 import tensorflow as tf
 from tensorflow import keras
 import pickle
+import csv
+from scipy.signal import lfilter
 
 """
 These are used to label the data. The first file is the first file in the dataset, and the fourth file is the fourth file in the dataset.
@@ -507,65 +509,71 @@ def test_model_with_intensity(model, num_voxels_per_dimension, test_directory=No
     print("Done!")
 
 
-def test_model_with_intensity_and_scan_name(model, num_voxels_per_dimension, test_data, test_labels, test_scan_names):
+def test_model_with_intensity_and_scan_name(model, test_data):
     predictions = model.predict(test_data, batch_size=4)
-    first_predictions = []
-    first_truths = []
+    return predictions
+
+
+def separate_by_scan_name(data, scan_names):
+    first_data = []
     first_times = []
-    second_predictions = []
-    second_truths = []
+    second_data = []
     second_times = []
-    third_predictions = []
-    third_truths = []
+    third_data = []
     third_times = []
-    fourth_predictions = []
-    fourth_truths = []
+    fourth_data = []
     fourth_times = []
-    for i in range(len(test_scan_names)):
-        if "first" in test_scan_names[i]:
-            first_predictions.append(np.argmax(predictions, axis=1)[i])
-            first_truths.append(test_labels[i])
-            basename = os.path.basename(test_scan_names[i])
+    for i in range(len(scan_names)):
+        if "first" in scan_names[i]:
+            first_data.append(data[i])
+            basename = os.path.basename(scan_names[i])
             file_no = int(basename[basename.find('_') + 1:basename.find('.')])
             first_times = np.append(first_times, file_no)
-        elif "second" in test_scan_names[i]:
-            second_predictions.append(np.argmax(predictions, axis=1)[i])
-            second_truths.append(test_labels[i])
-            basename = os.path.basename(test_scan_names[i])
+        elif "second" in scan_names[i]:
+            second_data.append(data[i])
+            basename = os.path.basename(scan_names[i])
             file_no = int(basename[basename.find('_') + 1:basename.find('.')])
             second_times = np.append(second_times, file_no)
-        elif "third" in test_scan_names[i]:
-            third_predictions.append(np.argmax(predictions, axis=1)[i])
-            third_truths.append(test_labels[i])
-            basename = os.path.basename(test_scan_names[i])
+        elif "third" in scan_names[i]:
+            third_data.append(data[i])
+            basename = os.path.basename(scan_names[i])
             file_no = int(basename[basename.find('_') + 1:basename.find('.')])
             third_times = np.append(third_times, file_no)
-        elif "fourth" in test_scan_names[i]:
-            fourth_predictions.append(np.argmax(predictions, axis=1)[i])
-            fourth_truths.append(test_labels[i])
-            basename = os.path.basename(test_scan_names[i])
+        elif "fourth" in scan_names[i]:
+            fourth_data.append(data[i])
+            basename = os.path.basename(scan_names[i])
             file_no = int(basename[basename.find('_') + 1:basename.find('.')])
             fourth_times = np.append(fourth_times, file_no)
         else:
             print("Error: scan name not recognized")
 
-    plot_prediction_vs_reality(fourth_predictions, fourth_truths, fourth_times)
+    return first_data, first_times, second_data, second_times, third_data, third_times, fourth_data, fourth_times
 
 
-def plot_prediction_vs_reality(prediction_list, reality_list, time_labels):
+def plot_prediction_vs_reality_vs_yolo(prediction_list, prediction_time_labels, yolo_list, yolo_time_labels, reality_list, reality_time_labels):
 
     # Sort the lists by time
-    time_labels, prediction_list, reality_list = zip(*sorted(zip(time_labels, prediction_list, reality_list)))
+    prediction_time_labels, prediction_list = zip(*sorted(zip(prediction_time_labels, prediction_list)))
+    reality_time_labels, reality_list = zip(*sorted(zip(reality_time_labels, reality_list)))
+    yolo_time_labels, yolo_list = zip(*sorted(zip(yolo_time_labels, yolo_list)))
 
 
     # Create a new figure
     plt.figure()
 
-    # Plot y1 vs x as a blue line
-    plt.plot(time_labels, prediction_list, color='blue', label='y1')
+    # Plot yolo vs time as a green line first
+    # since YOLO data is frame by frame, we'll smooth it out a bit
+    n = 450  # the larger n is, the smoother curve will be
+    b = [1.0 / n] * n
+    a = 1
+    filtered_yolo_list = lfilter(b, a, yolo_list)
+    plt.plot(yolo_time_labels, yolo_list, color='green', label='yolo')
 
-    # Plot y2 vs x as a red line
-    plt.plot(time_labels, reality_list, color='red', label='y2')
+    # Plot prediction vs time as a blue line
+    plt.plot(prediction_time_labels, prediction_list, color='blue', label='LiDAR-Based Prediction')
+
+    # Plot reality vs time as a red line
+    plt.plot(reality_time_labels, reality_list, color='red', label='reality')
 
     # Set the x-axis label
     plt.xlabel('time')
@@ -581,7 +589,6 @@ def plot_prediction_vs_reality(prediction_list, reality_list, time_labels):
 
     # Show the plot
     plt.show()
-
 
 
 def evenly_split_data(data, labels):
@@ -665,6 +672,44 @@ def load_processed_data_and_labels_from_file(return_scan_names=False):
     return all_data, all_labels
 
 
+def load_yolo_results_from_csv(filename):
+    vid1_results = []
+    vid1_times = []
+    vid2_results = []
+    vid2_times = []
+    vid3_results = []
+    vid3_times = []
+    with open(filename, 'r') as f:
+        reader = csv.reader(f)
+        reader.__next__() # skip header
+        lineno = 0
+        for line in reader:
+            if line[0] != '':
+                vid1_results.append(int(line[0]))
+                vid1_times.append(lineno / 30) # 30 fps
+            if line[1] != '':
+                vid2_results.append(int(line[1]))
+                vid2_times.append(lineno / 30) # 30 fps
+            if line[2] != '':
+                vid3_results.append(int(line[2]))
+                vid3_times.append(lineno / 30) # 30 fps
+            lineno += 1
+    
+    return vid1_results, vid1_times, vid2_results, vid2_times, vid3_results, vid3_times
+
+
+def downsample_to_given_times(times, data, new_times):
+    """
+    This function takes a list of times and a list of data and returns a new list of data that is downsampled to the given new_times
+    """
+    new_data = []
+    for i in range(len(new_times)):
+        j = 0
+        while j < len(data) - 1 and times[j] < new_times[i]:
+            j += 1
+        new_data.append(data[j])
+    return new_data 
+
 #save_processed_data_and_labels('trainable_set')
 
 all_data, all_labels, scan_names = load_processed_data_and_labels_from_file(return_scan_names=True)
@@ -674,7 +719,6 @@ train_data, train_labels, test_data, test_labels, train_scan_names, test_scan_na
 train_data = np.array(train_data)
 train_labels = np.array(train_labels)
 test_data = np.array(test_data)
-test_labels = one_hot_to_int(test_labels)
 
 my_classifier = create_new_classifier_with_intensity(10, train_data=train_data, train_labels=train_labels)
 
@@ -683,4 +727,27 @@ my_classifier = create_new_classifier_with_intensity(10, train_data=train_data, 
 #my_classifier = load_model('ten_dim_random_split_with_intensity.h5')
 
 #test_model_with_intensity(my_classifier, 10, test_data=test_data, test_labels=test_labels, test_scan_names=test_scan_names)
-test_model_with_intensity_and_scan_name(my_classifier, 10, test_data=test_data, test_labels=test_labels, test_scan_names=test_scan_names)
+predictions = test_model_with_intensity_and_scan_name(my_classifier, test_data=test_data)
+predictions = np.argmax(predictions, axis=1)
+first_predictions, first_p_times, second_predictions, second_p_times, third_predictions, third_p_times, fourth_predictions, fourth_p_times = separate_by_scan_name(predictions, test_scan_names)
+
+first_truths, first_times, second_truths, second_times, third_truths, third_times, fourth_truths, fourth_times = separate_by_scan_name(all_labels, scan_names)
+fourth_truths = one_hot_to_int(fourth_truths)
+first_truths = one_hot_to_int(first_truths)
+second_truths = one_hot_to_int(second_truths)
+
+# yolo video 1 corresponds to first lidar scan, yolo video 3 corresponds to fourth lidar scan
+yolo_1, yolo_1_times, yolo_2, yolo_2_times, yolo_3, yolo_3_times = load_yolo_results_from_csv('yolo_labels/yolo_labels.csv')
+
+plot_prediction_vs_reality_vs_yolo(first_predictions, first_p_times, yolo_1, yolo_1_times, first_truths, first_times)
+#plot_prediction_vs_reality_vs_yolo(second_predictions, second_p_times, yolo_2, yolo_2_times, second_truths, second_times)
+plot_prediction_vs_reality_vs_yolo(fourth_predictions, fourth_p_times, yolo_3, yolo_3_times, fourth_truths, fourth_times)
+
+# downsample to only show YOLO and reality predictions at the moment that a NN prediction is made
+new_yolo_1 = downsample_to_given_times(yolo_1_times, yolo_1, first_p_times)
+new_yolo_3 = downsample_to_given_times(yolo_3_times, yolo_3, fourth_p_times)
+new_first_truths = downsample_to_given_times(first_times, first_truths, first_p_times)
+new_fourth_truths = downsample_to_given_times(fourth_times, fourth_truths, fourth_p_times)
+
+plot_prediction_vs_reality_vs_yolo(first_predictions, first_p_times, new_yolo_1, first_p_times, new_first_truths, first_p_times)
+plot_prediction_vs_reality_vs_yolo(fourth_predictions, fourth_p_times, new_yolo_3, fourth_p_times, new_fourth_truths, fourth_p_times)
